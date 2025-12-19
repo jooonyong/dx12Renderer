@@ -120,7 +120,8 @@ bool InitD3D()
         return false;
     }
     //바로 commandlist Record를 하지 않을 것이기 때문에 Close로 닫아준다.
-    commandList->Close();
+    //주석을 지우면 commandlist가 닫힌 상태가 되서 삼각형이 그려지지 않는다. 
+    //commandList->Close();
 
     //Create Fence, FenceEvent
     for (int i = 0; i < frameBufferCount; i++)
@@ -138,12 +139,160 @@ bool InitD3D()
     {
         return false;
     }
+
+    //Create RootSignature
+    CD3DX12_ROOT_SIGNATURE_DESC rootSignatureDesc;
+    rootSignatureDesc.Init(0, nullptr, 0, nullptr, D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT);
+
+    ID3DBlob* signature;
+	hr = D3D12SerializeRootSignature(&rootSignatureDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signature, nullptr);
+    if (FAILED(hr))
+    {
+        return false;
+    }
+
+    hr = device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&rootSignature));
+    if (FAILED(hr))
+    {
+        return false;
+    }
+
+	//Vertex Shader
+    ID3DBlob* vertexShader;
+    ID3DBlob* errorBuffer;
+    hr = D3DCompileFromFile(L"VertexShader.hlsl", nullptr, nullptr, "main", "vs_5_0",
+        D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, &vertexShader, &errorBuffer);
+    if (FAILED(hr))
+    {
+        OutputDebugStringA((char*)errorBuffer->GetBufferPointer());
+        return false;
+    }
+
+	D3D12_SHADER_BYTECODE vertexShaderBytecode = {};
+    vertexShaderBytecode.BytecodeLength = vertexShader->GetBufferSize();
+	vertexShaderBytecode.pShaderBytecode = vertexShader->GetBufferPointer();
+
+    //Pixel Shader
+    ID3DBlob* pixelShader;
+    hr = D3DCompileFromFile(L"PixelShader.hlsl", nullptr, nullptr, "main", "ps_5_0",
+        D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION, 0, &pixelShader, &errorBuffer);
+    if (FAILED(hr))
+    {
+        OutputDebugStringA((char*)errorBuffer->GetBufferPointer());
+        return false;
+    }
+
+	D3D12_SHADER_BYTECODE pixelShaderBytecode = {};
+	pixelShaderBytecode.BytecodeLength = pixelShader->GetBufferSize();
+	pixelShaderBytecode.pShaderBytecode = pixelShader->GetBufferPointer();
+
+    //Create InputLayout
+    D3D12_INPUT_ELEMENT_DESC inputLayout[] =
+    {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0}
+    };
+
+    D3D12_INPUT_LAYOUT_DESC inputLayoutDesc = {};
+    inputLayoutDesc.NumElements = sizeof(inputLayout) / sizeof(D3D12_INPUT_ELEMENT_DESC);
+    inputLayoutDesc.pInputElementDescs = inputLayout;
+
+	//Create PSO(Pipeline State Object)
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+    psoDesc.InputLayout = inputLayoutDesc;
+    psoDesc.pRootSignature = rootSignature;
+    psoDesc.VS = vertexShaderBytecode;
+    psoDesc.PS = pixelShaderBytecode;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    psoDesc.SampleDesc = sampleDesc;
+	psoDesc.SampleMask = 0xffffffff;
+    psoDesc.RasterizerState = CD3DX12_RASTERIZER_DESC(D3D12_DEFAULT);
+	psoDesc.BlendState = CD3DX12_BLEND_DESC(D3D12_DEFAULT);
+	psoDesc.NumRenderTargets = 1;
+
+    hr = device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&pipelineStateObject));
+    if (FAILED(hr))
+    {
+        return false;
+    }
+
+    //Create VertexBuffer
+    Vertex vertexList[] = {
+        {{0.0f, 0.5f, 0.0f}},
+        {{0.5f, -0.5f, 0.0f}},
+        {{-0.5f, -0.5f, 0.0f}}
+	};
+    int vertexBufferSize = sizeof(vertexList);
+	CD3DX12_HEAP_PROPERTIES DefaultHeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+    CD3DX12_RESOURCE_DESC bufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
+   
+    device->CreateCommittedResource(&DefaultHeapProperties,
+        D3D12_HEAP_FLAG_NONE,
+        &bufferDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&vertexBuffer));
+
+    vertexBuffer->SetName(L"Vertex Buffer Resource Heap");
+
+    ID3D12Resource* vertexBufferUploadHeap;
+    CD3DX12_HEAP_PROPERTIES UploadHeapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_UPLOAD);
+    CD3DX12_RESOURCE_DESC uploadBufferDesc = CD3DX12_RESOURCE_DESC::Buffer(vertexBufferSize);
+       device->CreateCommittedResource(&UploadHeapProperties,
+        D3D12_HEAP_FLAG_NONE,
+        &uploadBufferDesc,
+        D3D12_RESOURCE_STATE_GENERIC_READ,
+        nullptr,
+        IID_PPV_ARGS(&vertexBufferUploadHeap));
+
+    vertexBufferUploadHeap->SetName(L"Vertex Buffer Upload Resource Heap");
+    
+    D3D12_SUBRESOURCE_DATA vertexData = {};
+	vertexData.pData = reinterpret_cast<BYTE*>(vertexList);
+	vertexData.RowPitch = vertexBufferSize;
+    vertexData.SlicePitch = vertexBufferSize;
+
+	UpdateSubresources(commandList, vertexBuffer, vertexBufferUploadHeap, 0, 0, 1, &vertexData);
+    
+    CD3DX12_RESOURCE_BARRIER ResourceBarrier = CD3DX12_RESOURCE_BARRIER::Transition(vertexBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+    commandList->ResourceBarrier(1, &ResourceBarrier);
+
+    commandList->Close();
+    ID3D12CommandList* ppCommandLists[] = { commandList };
+	commandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
+
+	fenceValue[frameIndex]++;
+	hr = commandQueue->Signal(fence[frameIndex], fenceValue[frameIndex]);
+    if (FAILED(hr))
+    {
+        Running = false;
+    }
+
+    // create a vertex buffer view for the triangle. We get the GPU memory address to the vertex pointer using the GetGPUVirtualAddress() method
+    vertexBufferView.BufferLocation = vertexBuffer->GetGPUVirtualAddress();
+    vertexBufferView.StrideInBytes = sizeof(Vertex);
+    vertexBufferView.SizeInBytes = vertexBufferSize;
+
+    // Fill out the Viewport
+    viewport.TopLeftX = 0;
+    viewport.TopLeftY = 0;
+    viewport.Width = Width;
+    viewport.Height = Height;
+    viewport.MinDepth = 0.0f;
+    viewport.MaxDepth = 1.0f;
+
+    // Fill out a scissor rect
+    scissorRect.left = 0;
+    scissorRect.top = 0;
+    scissorRect.right = Width;
+    scissorRect.bottom = Height;
+
     return true;
 }
 
 void Update()
 {
-    ////
+    //
 }
 
 void UpdatePipeline()
@@ -158,7 +307,7 @@ void UpdatePipeline()
         Running = false;
     }
 
-    hr = commandList->Reset(commandAllocator[frameIndex], NULL);
+    hr = commandList->Reset(commandAllocator[frameIndex], pipelineStateObject);
     if (FAILED(hr))
     {
         Running = false;
@@ -176,8 +325,22 @@ void UpdatePipeline()
     
     commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
 
-    const float clearColor[] = { 0.0f, 0.4f, 0.4f, 1.0f };
+    const float clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
     commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+    
+    // draw triangle
+    commandList->SetGraphicsRootSignature(rootSignature); // set the root signature
+    commandList->RSSetViewports(1, &viewport); // set the viewports
+    commandList->RSSetScissorRects(1, &scissorRect); // set the scissor rects
+    commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); // set the primitive topology
+    commandList->IASetVertexBuffers(0, 1, &vertexBufferView); // set the vertex buffer (using the vertex buffer view)
+
+    commandList->DrawInstanced(3, 1, 0, 0); // finally draw 3 vertices (draw the triangle)
+
+    // transition the "frameIndex" render target from the render target state to the present state. If the debug layer is enabled, you will receive a
+    // warning if present is called on the render target when it's not in the present state
+    CD3DX12_RESOURCE_BARRIER RenderTargetResourceBarrier = CD3DX12_RESOURCE_BARRIER::Transition(renderTargets[frameIndex], D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+    commandList->ResourceBarrier(1, &RenderTargetResourceBarrier);
 
     hr = commandList->Close();
     if (FAILED(hr))
@@ -234,8 +397,12 @@ void Cleanup()
         SAFE_RELEASE(commandAllocator[i]);
         SAFE_RELEASE(fence[i]);
     }
+    SAFE_RELEASE(pipelineStateObject);
+    SAFE_RELEASE(rootSignature);
+    SAFE_RELEASE(vertexBuffer);
 }
 
+//FENCE
 void WaitForPreviousFrame()
 {
     HRESULT hr;

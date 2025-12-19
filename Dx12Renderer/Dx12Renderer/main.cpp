@@ -1,5 +1,7 @@
 #include "stdafx.h"
 
+using namespace DirectX;
+
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow)
 {
 	if (!InitializeWindow(hInstance, nCmdShow, Width, Height, FullScreen))

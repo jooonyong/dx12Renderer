@@ -13,6 +13,11 @@
 
 #define SAFE_RELEASE(p) { if ( (p) ) { (p)->Release(); (p) = 0; } }
 
+struct Vertex
+{
+	DirectX::XMFLOAT3 position;
+};
+
 //Window Setting Variable
 static HWND Hwnd = nullptr;
 static LPCTSTR WindowName = L"DX12RendererWindow";
@@ -51,6 +56,14 @@ static UINT64 fenceValue[frameBufferCount]; // this value is incremented each fr
 static int frameIndex; // current rtv we are on
 
 static int rtvDescriptorSize; // size of the rtv descriptor on the device (all front and back buffers will be the same size)
+
+//PSO
+static ID3D12PipelineState* pipelineStateObject;
+static ID3D12RootSignature* rootSignature;
+static D3D12_VIEWPORT viewport;
+static D3D12_RECT scissorRect;
+static ID3D12Resource* vertexBuffer;
+static D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
 
 // function declarations
 bool InitializeWindow(HINSTANCE hInstance, int ShowWnd, int Width, int Height, bool FullScreen);
