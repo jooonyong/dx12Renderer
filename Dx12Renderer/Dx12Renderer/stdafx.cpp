@@ -77,8 +77,8 @@ bool InitD3D()
     D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
     rtvHeapDesc.NumDescriptors = frameBufferCount;
     rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-
     rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+
     hr = device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&rtvDescriptorHeap));
     if (FAILED(hr))
     {
@@ -119,7 +119,6 @@ bool InitD3D()
     {
         return false;
     }
-    //바로 commandlist Record를 하지 않을 것이기 때문에 Close로 닫아준다.
     //주석을 지우면 commandlist가 닫힌 상태가 되서 삼각형이 그려지지 않는다. 
     //commandList->Close();
 
@@ -219,9 +218,10 @@ bool InitD3D()
 
     //Create VertexBuffer
     Vertex vertexList[] = {
-        {0.0f, 0.5f, 0.5f, 1.0f, 0.0f, 0.0f,1.0f},
-        {0.5f, -0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 1.0f},
-        {-0.5f, -0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f}
+        { -0.5f,  0.5f, 0.5f, 1.0f, 0.0f, 0.0f, 1.0f },
+        {  0.5f, -0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 1.0f },
+        { -0.5f, -0.5f, 0.5f, 0.0f, 0.0f, 1.0f, 1.0f },
+        {  0.5f,  0.5f, 0.5f, 1.0f, 0.0f, 1.0f, 1.0f }
 	};
     int vertexBufferSize = sizeof(vertexList);
 	CD3DX12_HEAP_PROPERTIES DefaultHeapProperties(D3D12_HEAP_TYPE_DEFAULT);
@@ -257,8 +257,51 @@ bool InitD3D()
     
     CD3DX12_RESOURCE_BARRIER ResourceBarrier = CD3DX12_RESOURCE_BARRIER::Transition(vertexBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
     commandList->ResourceBarrier(1, &ResourceBarrier);
+    
+    DWORD indexList[] = {
+        0,1,2,
+        0,3,1
+    };
+    int indexBufferSize = sizeof(indexList);
+
+    CD3DX12_HEAP_PROPERTIES indexDefaultHeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+    CD3DX12_RESOURCE_DESC indexDefaultHeapDesc = CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize);
+    device->CreateCommittedResource(&indexDefaultHeapProperties,
+        D3D12_HEAP_FLAG_NONE,
+        &indexDefaultHeapDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        IID_PPV_ARGS(&indexBuffer)
+    );
+
+    indexBuffer->SetName(L"Index Buffer Resource Heap");
+    
+    ID3D12Resource* indexBufferUploadHeap;
+    CD3DX12_HEAP_PROPERTIES indexUploadHeapProperties(D3D12_HEAP_TYPE_UPLOAD);
+    CD3DX12_RESOURCE_DESC indexUploadHeapDesc = CD3DX12_RESOURCE_DESC::Buffer(indexBufferSize);
+    
+    device->CreateCommittedResource(&indexUploadHeapProperties,
+        D3D12_HEAP_FLAG_NONE,
+        &indexUploadHeapDesc,
+        D3D12_RESOURCE_STATE_GENERIC_READ,
+        nullptr,
+        IID_PPV_ARGS(&indexBufferUploadHeap)
+    );
+
+    indexBufferUploadHeap->SetName(L"Index Buffer Upload Resource Heap");
+
+    D3D12_SUBRESOURCE_DATA indexData = {};
+    indexData.pData = reinterpret_cast<BYTE*>(indexList);
+    indexData.RowPitch = indexBufferSize;
+    indexData.SlicePitch = indexBufferSize;
+
+    UpdateSubresources(commandList, indexBuffer, indexBufferUploadHeap, 0, 0, 1, &indexData);
+
+    CD3DX12_RESOURCE_BARRIER IndexResourceBarrier = CD3DX12_RESOURCE_BARRIER::Transition(indexBuffer, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_INDEX_BUFFER);
+    commandList->ResourceBarrier(1, &IndexResourceBarrier);
 
     commandList->Close();
+
     ID3D12CommandList* ppCommandLists[] = { commandList };
 	commandQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
 
@@ -274,6 +317,9 @@ bool InitD3D()
     vertexBufferView.StrideInBytes = sizeof(Vertex);
     vertexBufferView.SizeInBytes = vertexBufferSize;
 
+    indexBufferView.BufferLocation = indexBuffer->GetGPUVirtualAddress();
+    indexBufferView.SizeInBytes = indexBufferSize;
+    indexBufferView.Format = DXGI_FORMAT_R32_UINT;
     // Fill out the Viewport
     viewport.TopLeftX = 0;
     viewport.TopLeftY = 0;
@@ -315,7 +361,7 @@ void UpdatePipeline()
     }
 
     CD3DX12_RESOURCE_BARRIER barrier = CD3DX12_RESOURCE_BARRIER::Transition(
-        renderTargets[frameIndex],                // 여기도 .Get() 필요할 수 있음(아래에서 설명)
+        renderTargets[frameIndex],                
         D3D12_RESOURCE_STATE_PRESENT,
         D3D12_RESOURCE_STATE_RENDER_TARGET
     );
@@ -335,9 +381,9 @@ void UpdatePipeline()
     commandList->RSSetScissorRects(1, &scissorRect); // set the scissor rects
     commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); // set the primitive topology
     commandList->IASetVertexBuffers(0, 1, &vertexBufferView); // set the vertex buffer (using the vertex buffer view)
-
-    commandList->DrawInstanced(3, 1, 0, 0); // finally draw 3 vertices (draw the triangle)
-
+    commandList->IASetIndexBuffer(&indexBufferView);
+    //commandList->DrawInstanced(3, 1, 0, 0); // finally draw 3 vertices (draw the triangle)
+    commandList->DrawIndexedInstanced(6, 1, 0, 0, 0);
     // transition the "frameIndex" render target from the render target state to the present state. If the debug layer is enabled, you will receive a
     // warning if present is called on the render target when it's not in the present state
     CD3DX12_RESOURCE_BARRIER RenderTargetResourceBarrier = CD3DX12_RESOURCE_BARRIER::Transition(renderTargets[frameIndex], D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -401,6 +447,7 @@ void Cleanup()
     SAFE_RELEASE(pipelineStateObject);
     SAFE_RELEASE(rootSignature);
     SAFE_RELEASE(vertexBuffer);
+    SAFE_RELEASE(indexBuffer);
 }
 
 //FENCE

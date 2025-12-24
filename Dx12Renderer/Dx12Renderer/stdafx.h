@@ -66,8 +66,10 @@ static ID3D12RootSignature* rootSignature;
 static D3D12_VIEWPORT viewport;
 static D3D12_RECT scissorRect;
 static ID3D12Resource* vertexBuffer;
-static D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
+static ID3D12Resource* indexBuffer;
 
+static D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
+static D3D12_INDEX_BUFFER_VIEW indexBufferView;
 // function declarations
 bool InitializeWindow(HINSTANCE hInstance, int ShowWnd, int Width, int Height, bool FullScreen);
 void MainLoop();
